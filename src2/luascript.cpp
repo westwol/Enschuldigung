@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2015  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2016  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -35,6 +35,8 @@
 #include "monster.h"
 #include "scheduler.h"
 #include "databasetasks.h"
+#include "scriptmanager.h"
+#include "store.h"
 
 extern Chat* g_chat;
 extern Game g_game;
@@ -42,6 +44,7 @@ extern Monsters g_monsters;
 extern ConfigManager g_config;
 extern Vocations g_vocations;
 extern Spells* g_spells;
+extern Store* g_store;
 
 enum {
 	EVENT_ID_LOADING = 1,
@@ -1038,6 +1041,12 @@ void LuaScriptInterface::registerFunctions()
 	//registerEnumIn(tableName, value)
 
 	// Enums
+	registerEnum(STORE_ERROR_PURCHASE)
+	registerEnum(STORE_ERROR_NETWORK)
+	registerEnum(STORE_ERROR_HISTORY)
+	registerEnum(STORE_ERROR_TRANSFER)
+	registerEnum(STORE_ERROR_INFORMATION)
+
 	registerEnum(ACCOUNT_TYPE_NORMAL)
 	registerEnum(ACCOUNT_TYPE_TUTOR)
 	registerEnum(ACCOUNT_TYPE_SENIORTUTOR)
@@ -2230,6 +2239,8 @@ void LuaScriptInterface::registerFunctions()
 	registerMethod("Player", "getContainerById", LuaScriptInterface::luaPlayerGetContainerById);
 	registerMethod("Player", "getContainerIndex", LuaScriptInterface::luaPlayerGetContainerIndex);
 
+	registerMethod("Player", "sendStoreError", LuaScriptInterface::luaPlayerSendStoreError);
+
 	// Monster
 	registerClass("Monster", "Creature", LuaScriptInterface::luaMonsterCreate);
 	registerMetaMethod("Monster", "__eq", LuaScriptInterface::luaUserdataCompare);
@@ -2525,6 +2536,13 @@ void LuaScriptInterface::registerFunctions()
 	registerMethod("Party", "isSharedExperienceEnabled", LuaScriptInterface::luaPartyIsSharedExperienceEnabled);
 	registerMethod("Party", "shareExperience", LuaScriptInterface::luaPartyShareExperience);
 	registerMethod("Party", "setSharedExperience", LuaScriptInterface::luaPartySetSharedExperience);
+
+	// StoreOffer
+	registerClass("StoreOffer", "", LuaScriptInterface::luaStoreOfferCreate);
+	registerMetaMethod("StoreOffer", "__eq", LuaScriptInterface::luaUserdataCompare);
+
+	registerMethod("StoreOffer", "getId", LuaScriptInterface::luaStoreOfferGetId);
+	registerMethod("StoreOffer", "getName", LuaScriptInterface::luaStoreOfferGetName);
 }
 
 #undef registerEnum
@@ -3434,7 +3452,7 @@ int LuaScriptInterface::luaDoAddContainerItem(lua_State* L)
 				lua_pushnumber(L, env->addThing(newItem));
 			} else {
 				//stackable item stacked with existing object, newItem will be released
-				pushBoolean(L, false);
+				pushBoolean(L, false); 
 			}
 			return 1;
 		}
@@ -5767,9 +5785,9 @@ int LuaScriptInterface::luaItemGetParent(lua_State* L)
 	if (Creature* creature = parent->getCreature()) {
 		pushUserdata<Creature>(L, creature);
 		setCreatureMetatable(L, -1, creature);
-	} else if (Item* item = parent->getItem()) {
-		pushUserdata<Item>(L, item);
-		setItemMetatable(L, -1, item);
+	} else if (Item* parentItem = parent->getItem()) {
+		pushUserdata<Item>(L, parentItem);
+		setItemMetatable(L, -1, parentItem);
 	} else if (Tile* tile = parent->getTile()) {
 		pushUserdata<Tile>(L, tile);
 		setMetatable(L, -1, "Tile");
@@ -5799,9 +5817,9 @@ int LuaScriptInterface::luaItemGetTopParent(lua_State* L)
 	if (Creature* creature = topParent->getCreature()) {
 		pushUserdata<Creature>(L, creature);
 		setCreatureMetatable(L, -1, creature);
-	} else if (Item* item = topParent->getItem()) {
-		pushUserdata<Item>(L, item);
-		setItemMetatable(L, -1, item);
+	} else if (Item* topParentItem = topParent->getItem()) {
+		pushUserdata<Item>(L, topParentItem);
+		setItemMetatable(L, -1, topParentItem);
 	} else if (Tile* tile = topParent->getTile()) {
 		pushUserdata<Tile>(L, tile);
 		setMetatable(L, -1, "Tile");
@@ -6727,9 +6745,9 @@ int LuaScriptInterface::luaCreatureGetParent(lua_State* L)
 		return 1;
 	}
 
-	if (Creature* creature = parent->getCreature()) {
-		pushUserdata<Creature>(L, creature);
-		setCreatureMetatable(L, -1, creature);
+	if (Creature* parentCreature = parent->getCreature()) {
+		pushUserdata<Creature>(L, parentCreature);
+		setCreatureMetatable(L, -1, parentCreature);
 	} else if (Item* item = parent->getItem()) {
 		pushUserdata<Item>(L, item);
 		setItemMetatable(L, -1, item);
@@ -8824,10 +8842,20 @@ int LuaScriptInterface::luaPlayerSendOutfitWindow(lua_State* L)
 
 int LuaScriptInterface::luaPlayerAddMount(lua_State* L)
 {
-	// player:addMount(mountId)
+	// player:addMount(mountId or mountName)
 	Player* player = getUserdata<Player>(L, 1);
 	if (player) {
-		uint8_t mountId = getNumber<uint8_t>(L, 2);
+		uint8_t mountId;
+		if (isString(L, 2)) {
+			Mount* mount = g_game.mounts.getMountByName(getString(L, 2));
+			if (!mount) {
+				lua_pushnil(L);
+				return 1;
+			}
+			mountId = mount->id;
+		} else {
+			mountId = getNumber<uint8_t>(L, 2);
+		}
 		pushBoolean(L, player->tameMount(mountId));
 	} else {
 		lua_pushnil(L);
@@ -8837,10 +8865,20 @@ int LuaScriptInterface::luaPlayerAddMount(lua_State* L)
 
 int LuaScriptInterface::luaPlayerRemoveMount(lua_State* L)
 {
-	// player:removeMount(mountId)
+	// player:removeMount(mountId or mountName)
 	Player* player = getUserdata<Player>(L, 1);
 	if (player) {
-		uint8_t mountId = getNumber<uint8_t>(L, 2);
+		uint8_t mountId;
+		if (isString(L, 2)) {
+			Mount* mount = g_game.mounts.getMountByName(getString(L, 2));
+			if (!mount) {
+				lua_pushnil(L);
+				return 1;
+			}
+			mountId = mount->id;
+		} else {
+			mountId = getNumber<uint8_t>(L, 2);
+		}
 		pushBoolean(L, player->untameMount(mountId));
 	} else {
 		lua_pushnil(L);
@@ -8850,15 +8888,20 @@ int LuaScriptInterface::luaPlayerRemoveMount(lua_State* L)
 
 int LuaScriptInterface::luaPlayerHasMount(lua_State* L)
 {
-	// player:hasMount(mountId)
+	// player:hasMount(mountId or mountName)
 	const Player* player = getUserdata<const Player>(L, 1);
 	if (!player) {
 		lua_pushnil(L);
 		return 1;
 	}
 
-	uint8_t mountId = getNumber<uint8_t>(L, 2);
-	Mount* mount = g_game.mounts.getMountByID(mountId);
+	Mount* mount = nullptr;
+	if (isString(L, 2)) {
+		mount = g_game.mounts.getMountByName(getString(L, 2));
+	} else {
+		mount = g_game.mounts.getMountByID(getNumber<uint8_t>(L, 2));
+	}
+
 	if (mount) {
 		pushBoolean(L, player->hasMount(mount));
 	} else {
@@ -9252,6 +9295,23 @@ int LuaScriptInterface::luaPlayerGetContainerIndex(lua_State* L)
 	} else {
 		lua_pushnil(L);
 	}
+	return 1;
+}
+
+int LuaScriptInterface::luaPlayerSendStoreError(lua_State* L)
+{
+	// player::sendStoreError(errorType, message)
+	Player* player = getUserdata<Player>(L, 1);
+	if (player) {
+		StoreError_t errorType = static_cast<StoreError_t>(getNumber<uint8_t>(L, 2));
+		if (isString(L, 3)) {
+			player->sendStoreError(errorType, getString(L, 3));
+			pushBoolean(L, true);
+			return 1;
+		}
+	}
+
+	lua_pushnil(L);
 	return 1;
 }
 
@@ -10907,14 +10967,21 @@ int LuaScriptInterface::luaCombatCreate(lua_State* L)
 int LuaScriptInterface::luaCombatSetParameter(lua_State* L)
 {
 	// combat:setParameter(key, value)
-	uint32_t value = getNumber<uint32_t>(L, 3);
-	CombatParam_t key = getNumber<CombatParam_t>(L, 2);
 	Combat* combat = getUserdata<Combat>(L, 1);
-	if (combat) {
-		pushBoolean(L, combat->setParam(key, value));
-	} else {
+	if (!combat) {
 		lua_pushnil(L);
+		return 1;
 	}
+
+	CombatParam_t key = getNumber<CombatParam_t>(L, 2);
+	uint32_t value;
+	if (isBoolean(L, 3)) {
+		value = getBoolean(L, 3) ? 1 : 0;
+	} else {
+		value = getNumber<uint32_t>(L, 3);
+	}
+	combat->setParam(key, value);
+	pushBoolean(L, true);
 	return 1;
 }
 
@@ -12070,6 +12137,45 @@ int LuaScriptInterface::luaPartySetSharedExperience(lua_State* L)
 	Party* party = getUserdata<Party>(L, 1);
 	if (party) {
 		pushBoolean(L, party->setSharedExperience(party->getLeader(), active));
+	} else {
+		lua_pushnil(L);
+	}
+	return 1;
+}
+
+int LuaScriptInterface::luaStoreOfferCreate(lua_State* L)
+{
+	// StoreOffer(id)
+	if (isNumber(L, 2)) {
+		auto offer = g_store->getOfferById(getNumber<uint32_t>(L, 2));
+		if (offer) {
+			pushUserdata<StoreOffer>(L, &(*offer));
+			setMetatable(L, -1, "StoreOffer");
+			return 1;
+		}
+	}
+
+	lua_pushnil(L);
+	return 1;
+}
+
+int LuaScriptInterface::luaStoreOfferGetId(lua_State* L)
+{
+	StoreOffer* offer = getUserdata<StoreOffer>(L, 1);
+	if (offer) {
+		lua_pushnumber(L, offer->id);
+	} else {
+		lua_pushnil(L);
+	}
+	return 1;
+}
+
+int LuaScriptInterface::luaStoreOfferGetName(lua_State* L)
+{
+	// storeOffer:getName()
+	StoreOffer* offer = getUserdata<StoreOffer>(L, 1);
+	if (offer) {
+		pushString(L, offer->name);
 	} else {
 		lua_pushnil(L);
 	}

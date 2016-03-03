@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2015  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2016  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -117,6 +117,26 @@ enum SpellGroup_t : uint8_t {
 	SPELLGROUP_HEALING = 2,
 	SPELLGROUP_SUPPORT = 3,
 	SPELLGROUP_SPECIAL = 4,
+};
+
+enum StoreOfferState_t : uint8_t {
+	STORE_OFFERSTATE_NONE = 0,
+	STORE_OFFERSTATE_NEW = 1,
+	STORE_OFFERSTATE_SALE = 2,
+	STORE_OFFERSTATE_TIMED = 3,
+};
+
+enum StoreOfferType_t : uint8_t {
+	STORE_OFFERTYPE_OTHER = 0,
+	STORE_OFFERTYPE_NAMECHANGE = 1,
+};
+
+enum StoreError_t : uint8_t {
+	STORE_ERROR_PURCHASE = 0,
+	STORE_ERROR_NETWORK = 1,
+	STORE_ERROR_HISTORY = 2,
+	STORE_ERROR_TRANSFER = 3,
+	STORE_ERROR_INFORMATION = 4,
 };
 
 enum AccountType_t : uint8_t {
